@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Yılan Oyunu</title>
+<style>
+:root{
+  --bg:#eef3ea;--ink:#1f2a1f;--muted:#5d6b5d;--board:#dfe8d6;--board2:#d5dfcb;
+  --snake:#808080;--head:#666666;--food:#d6452f;--panel:#fbfdf8;--line:#c3d0b8;
+  box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#141b24;--ink:#e8eef5;--muted:#8fa0b3;--board:#1c2733;--board2:#192330;
+    --snake:#a6a6a6;--head:#c2c2c2;--food:#ff6b8a;--panel:#1c2733;--line:#2c3a4a;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#141b24;--ink:#e8eef5;--muted:#8fa0b3;--board:#1c2733;--board2:#192330;
+  --snake:#a6a6a6;--head:#c2c2c2;--food:#ff6b8a;--panel:#1c2733;--line:#2c3a4a;
+}
+*{box-sizing:border-box}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);
+  font-family:"Trebuchet MS",Verdana,system-ui,sans-serif;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:16px}
+.top{width:min(92vw,420px);display:flex;justify-content:space-between;align-items:center}
+h1{font-size:22px;margin:0}
+.scores{display:flex;gap:16px;font-size:15px}
+.scores b{font-size:20px}
+.muted{color:var(--muted)}
+.stage{position:relative;width:min(92vw,420px);aspect-ratio:1;border:2px solid var(--line);border-radius:10px;overflow:hidden;background:var(--board)}
+canvas{width:100%;height:100%;display:block;touch-action:none}
+.overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+  background:color-mix(in srgb,var(--panel) 82%,transparent);text-align:center;padding:16px}
+.overlay[hidden]{display:none}
+.overlay h2{margin:0;font-size:24px}
+button{font:inherit;cursor:pointer;border:0;border-radius:8px}
+.go{background:var(--snake);color:var(--bg);padding:10px 22px;font-weight:700}
+.theme{background:var(--panel);color:var(--ink);border:1px solid var(--line);padding:6px 10px}
+.pad{display:grid;grid-template-columns:repeat(3,64px);grid-template-rows:repeat(2,52px);gap:6px}
+.pad button{background:var(--panel);color:var(--ink);border:1px solid var(--line);font-size:22px}
+.pad button:active{background:var(--board)}
+.pad .u{grid-column:2}.pad .l{grid-column:1;grid-row:2}.pad .d{grid-column:2;grid-row:2}.pad .r{grid-column:3;grid-row:2}
+button:focus-visible{outline:3px solid var(--head);outline-offset:2px}
+@media (hover:hover) and (pointer:fine){.pad{display:none}}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>Yılan</h1>
+  <div class="scores"><span>Skor <b id="score">0</b></span><span>Rekor <b id="best">0</b></span></div>
+  <button class="theme" id="theme" aria-label="Tema değiştir">Tema</button>
+</div>
+
+<div class="stage">
+  <canvas id="c" width="400" height="400"></canvas>
+  <div class="overlay" id="ov">
+    <h2 id="ovTitle">Yılan Oyunu</h2>
+    <p class="muted" id="ovText">Yön tuşları veya WASD ile oyna. Boşluk duraklatır.</p>
+    <button class="go" id="start">Başla</button>
+  </div>
+</div>
+
+<div class="pad" aria-label="Yön tuşları">
+  <button class="u" data-d="up" aria-label="Yukarı">▲</button>
+  <button class="l" data-d="left" aria-label="Sol">◀</button>
+  <button class="d" data-d="down" aria-label="Aşağı">▼</button>
+  <button class="r" data-d="right" aria-label="Sağ">▶</button>
+</div>
+
+<script>
+const N = 20, S = 20;
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const $ = id => document.getElementById(id);
+const DIRS = {up:[0,-1], down:[0,1], left:[-1,0], right:[1,0]};
+
+let snake, dir, queue, food, score, state = 'idle', timer;
+let best = 0;
+try { best = +localStorage.getItem('snake-best') || 0; } catch (e) {}
+$('best').textContent = best;
+
+function css(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+
+function reset(){
+  snake = [{x:10,y:10},{x:9,y:10},{x:8,y:10}];
+  dir = 'right'; queue = []; score = 0;
+  $('score').textContent = 0;
+  placeFood();
+}
+
+function placeFood(){
+  do { food = {x:Math.floor(Math.random()*N), y:Math.floor(Math.random()*N)}; }
+  while (snake.some(s => s.x === food.x && s.y === food.y));
+}
+
+function turn(d){
+  if (state === 'idle' || state === 'over') return;
+  const last = queue.length ? queue[queue.length-1] : dir;
+  const a = DIRS[last], b = DIRS[d];
+  if (a[0] + b[0] === 0 && a[1] + b[1] === 0) return;   // ters yöne dönüş yok
+  if (d !== last && queue.length < 2) queue.push(d);
+}
+
+function tick(){
+  if (state !== 'playing') return;
+  if (queue.length) dir = queue.shift();
+  const [dx, dy] = DIRS[dir];
+  const head = {x:snake[0].x + dx, y:snake[0].y + dy};
+  const ate = head.x === food.x && head.y === food.y;
+  const body = ate ? snake : snake.slice(0, -1);
+  if (head.x < 0 || head.y < 0 || head.x >= N || head.y >= N ||
+      body.some(s => s.x === head.x && s.y === head.y)) return gameOver();
+  snake.unshift(head);
+  if (ate){
+    score++; $('score').textContent = score; placeFood();
+  } else snake.pop();
+  draw();
+  timer = setTimeout(tick, Math.max(65, 140 - score * 3));
+}
+
+function draw(){
+  ctx.fillStyle = css('--board'); ctx.fillRect(0,0,400,400);
+  ctx.fillStyle = css('--board2');
+  for (let x=0;x<N;x++) for (let y=0;y<N;y++) if ((x+y)%2) ctx.fillRect(x*S,y*S,S,S);
+  ctx.fillStyle = css('--food');
+  ctx.beginPath(); ctx.arc(food.x*S+S/2, food.y*S+S/2, S*0.38, 0, 7); ctx.fill();
+  snake.forEach((s,i) => {
+    ctx.fillStyle = css(i === 0 ? '--head' : '--snake');
+    ctx.beginPath(); ctx.roundRect(s.x*S+1, s.y*S+1, S-2, S-2, 5); ctx.fill();
+  });
+}
+
+function showOverlay(title, text, btn){
+  $('ovTitle').textContent = title; $('ovText').textContent = text;
+  $('start').textContent = btn; $('ov').hidden = false;
+}
+
+function startGame(){
+  clearTimeout(timer);
+  reset(); state = 'playing'; $('ov').hidden = true; draw();
+  timer = setTimeout(tick, 140);
+}
+
+function gameOver(){
+  state = 'over';
+  if (score > best){
+    best = score; $('best').textContent = best;
+    try { localStorage.setItem('snake-best', best); } catch (e) {}
+  }
+  showOverlay('Oyun bitti', `Skorun: ${score}. Rekor: ${best}.`, 'Tekrar oyna');
+}
+
+function togglePause(){
+  if (state === 'playing'){ state = 'paused'; clearTimeout(timer); showOverlay('Duraklatıldı', 'Devam etmek için boşluk tuşuna bas.', 'Devam et'); }
+  else if (state === 'paused'){ state = 'playing'; $('ov').hidden = true; tick(); }
+}
+
+$('start').addEventListener('click', () => state === 'paused' ? togglePause() : startGame());
+
+document.addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  const map = {arrowup:'up',w:'up',arrowdown:'down',s:'down',arrowleft:'left',a:'left',arrowright:'right',d:'right'};
+  if (map[k]){ e.preventDefault(); turn(map[k]); }
+  else if (k === ' '){
+    e.preventDefault();
+    if (state === 'idle' || state === 'over') startGame(); else togglePause();
+  }
+});
+
+document.querySelectorAll('.pad button').forEach(b =>
+  b.addEventListener('click', () => turn(b.dataset.d)));
+
+// Kaydırarak yön verme (mobil)
+let t0 = null;
+cv.addEventListener('touchstart', e => { t0 = e.touches[0]; }, {passive:true});
+cv.addEventListener('touchend', e => {
+  if (!t0) return;
+  const t = e.changedTouches[0], dx = t.clientX - t0.clientX, dy = t.clientY - t0.clientY;
+  if (Math.max(Math.abs(dx), Math.abs(dy)) > 20)
+    turn(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up'));
+  t0 = null;
+}, {passive:true});
+
+// Tema
+$('theme').addEventListener('click', () => {
+  const root = document.documentElement;
+  const dark = root.dataset.theme ? root.dataset.theme === 'dark'
+    : matchMedia('(prefers-color-scheme: dark)').matches;
+  root.dataset.theme = dark ? 'light' : 'dark';
+  draw();
+});
+
+reset(); draw();
+</script>
+</body>
+</html>
